@@ -1,4 +1,5 @@
-import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 import express from "express";
 import Usuario from "../models/Usuario.js";
 import { autenticarToken, gerarToken } from "../middleware/auth.js";
@@ -26,84 +27,88 @@ router.post("/signup", async (req, res) => {
 router.post("/login", async (req, res) => {
   try {
     const { email, senha } = req.body;
-    const user = await Usuario.findOne({ email });
 
-    if (!user)
-      return res.status(401).json({ msg: "Usuário não encontrado" });
+    const usuario = await Usuario.findOne({ email });
+    if (!usuario) {
+      return res.status(400).json({ msg: "E-mail não encontrado" });
+    }
 
-    const senhaCorreta = await bcrypt.compare(senha, user.senha);
-    if (!senhaCorreta)
-      return res.status(401).json({ msg: "Senha incorreta" });
+    const senhaValida = await usuario.verificarSenha(senha);
+    if (!senhaValida) {
+      return res.status(400).json({ msg: "Senha incorreta" });
+    }
 
-    // só gera token depois que a senha é validada
-    const token = gerarToken(user);
+    const token = jwt.sign(
+      { id: usuario._id, categoria: usuario.categoria },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
 
-    res.json({ usuario: user, token });
+    res.json({
+      msg: "Login realizado com sucesso",
+      token,
+      usuario
+    });
   } catch (err) {
     res.status(500).json({ msg: "Erro ao fazer login", erro: err.message });
   }
 });
 
-
-
-// Alterar senha
-router.put("/recovery/:email", async (req, res) => {
+// Rota para solicitar recuperação
+router.post("/recovery/request", async (req, res) => {
   try {
-    const { email } = req.params;
-    const { senhaAtual, novaSenha } = req.body;
+    const { email } = req.body;
 
-    if (!senhaAtual || !novaSenha)
-      return res.status(400).json({ msg: "Informe senha atual e nova senha" });
+    // Verifica se o email foi passado
+    if (!email) {
+      return res.status(400).json({ msg: "Email não fornecido" });
+    }
 
     const usuario = await Usuario.findOne({ email });
-    if (!usuario)
+    if (!usuario) {
       return res.status(404).json({ msg: "Usuário não encontrado" });
+    }
 
-    // Comparar senha atual (texto puro) com hash do banco
-    const senhaCorreta = await bcrypt.compare(senhaAtual, usuario.senha);
-    if (!senhaCorreta)
-      return res.status(401).json({ msg: "Senha atual incorreta" });
+    const token = jwt.sign(
+      { id: usuario._id },
+      process.env.JWT_SECRET || "segredo-super-seguro",
+      { expiresIn: "8h" }
+    );
 
-    // Atualizar senha (o pre('save') vai re-hashar)
-    usuario.senha = novaSenha;
+    return res.json({
+      msg: "Token de recuperação gerado com sucesso. Verifique seu email (simulado).",
+      token,
+    });
+
+  } catch (error) {
+    console.error("Erro ao processar a requisição:", error);
+    return res.status(500).json({ msg: "Erro interno ao processar a solicitação" });
+  }
+});
+
+// Rota para confirmar recuperação
+router.put("/recovery/confirm", async (req, res) => {
+  const { token, novaSenha } = req.body;
+
+  if (!token || !novaSenha)
+    return res.status(400).json({ msg: "Token e nova senha são obrigatórios" });
+
+  if (novaSenha.length < 6) {
+    return res.status(400).json({ msg: "A nova senha deve ter pelo menos 6 caracteres" });
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || "segredo-super-seguro");
+    const usuario = await Usuario.findById(decoded.id);
+    if (!usuario) return res.status(404).json({ msg: "Usuário não encontrado" });
+
+    usuario.senha = await bcrypt.hash(novaSenha, 10);
     await usuario.save();
 
     res.json({ msg: "Senha alterada com sucesso" });
   } catch (err) {
-    console.error("Erro ao alterar senha:", err);
-    res.status(500).json({ msg: "Erro ao alterar senha", erro: err.message });
+    res.status(400).json({ msg: "Token inválido ou expirado" });
   }
 });
-
-// Alterar senha
-router.put("/recovery/:email", async (req, res) => {
-  try {
-    const { email } = req.params;
-    const { senhaAtual, novaSenha } = req.body;
-
-    if (!senhaAtual || !novaSenha)
-      return res.status(400).json({ msg: "Informe senha atual e nova senha" });
-
-    const usuario = await Usuario.findOne({ email });
-    if (!usuario)
-      return res.status(404).json({ msg: "Usuário não encontrado" });
-
-    // Comparar senha atual (texto puro) com hash do banco
-    const senhaCorreta = await bcrypt.compare(senhaAtual, usuario.senha);
-    if (!senhaCorreta)
-      return res.status(401).json({ msg: "Senha atual incorreta" });
-
-    // Criptografar nova senha antes de salvar
-    const novaSenhaHash = await bcrypt.hash(novaSenha, 10);
-    usuario.senha = novaSenhaHash;
-    await usuario.save();
-
-    res.json({ msg: "Senha alterada com sucesso" });
-  } catch (err) {
-    console.error("Erro ao alterar senha:", err);
-    res.status(500).json({ msg: "Erro ao alterar senha", erro: err.message });
-  }
-});
-
 
 export default router;
