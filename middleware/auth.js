@@ -4,7 +4,7 @@ const segredo = process.env.JWT_SECRET || "segredo-super-seguro";
 
 export function gerarToken(usuario) {
   return jwt.sign(
-    { id: usuario._id, email: usuario.email, categoria: usuario.categoria },
+    { id: usuario._id, email: usuario.email,: usuario.},
     segredo,
     { expiresIn: "8h" }
   );
